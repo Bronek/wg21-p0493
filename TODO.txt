@@ -1,0 +1,21 @@
+FIX FORMATTING OF OLD PAPER
+
+
+
+# Abstract
+
+Add integer *max* and *min* operations to the set of operations supported in `<atomic>`. There are minor adjustments to function naming necessitated by the fact that `max` and `min` do not exist as infix operators.
+
+# Open isues
+
+In contrast to the existing atomic operations, some platforms which are known to implement atomic *min* and *max* in hardware, leave it unspecified as to whether the write takes place if the new value is the same as the old value. This paper acknowledges such platforms and proposes a solution to enable writing portable code using the newly proposed atomic operations.
+
+# Changelog
+
+## R2 to R3
+
+Published 2021-12-??
+
+- Following LEWG feedback, revert to require store if the value does not change
+- Remove an exceedingly long motivating example
+- Modernize remaining motivating example
