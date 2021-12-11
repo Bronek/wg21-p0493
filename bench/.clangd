@@ -1,0 +1,5 @@
+CompileFlags:
+  Add: [-xc++, -std=c++17, -Wall, -Wextra]
+Diagnostics:
+  ClangTidy:
+    Add: [performance*, modernize*]
