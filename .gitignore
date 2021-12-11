@@ -1,1 +1,4 @@
 generated/
+bench/*.o
+bench/bench
+.vscode
