@@ -53,7 +53,7 @@ struct config {
       }
       dest.size *= multiplier;
     } catch (std::exception const &e) {
-      std::fprintf(stderr, "Bad program argument: %s\n\n", e.what());
+      std::fprintf(::stderr, "Bad program argument: %s\n\n", e.what());
       return false;
     }
 
@@ -76,6 +76,7 @@ auto run(config const &c) noexcept -> int {
   };
 
   queue_t<dummy> queue{c.size};
+  constexpr int error = 512;
 
   for (size_t i = 0; i < c.cpus.size(); ++i) {
     if (!c.cpus.test(i)) {
@@ -87,7 +88,12 @@ auto run(config const &c) noexcept -> int {
       cpu_set_t cpuset;
       CPU_ZERO(&cpuset);
       CPU_SET(cpu, &cpuset);
-      pthread_getaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
+      if (0 !=
+          pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset)) {
+        std::fprintf(::stderr, "Unable to pin CPU: %li\n\n", cpu);
+        started += error;
+        return;
+      }
       std::printf("thread %lu on %li\n", pthread_self(), cpu);
 
       started += 1;
@@ -107,15 +113,25 @@ auto run(config const &c) noexcept -> int {
   while (started < c.cpus.count()) {
   }
 
+  // check if error
+  if (started >= error) {
+    starter = 1;
+    for (auto &t : threads) {
+      t.join();
+    }
+    return 1;
+  }
+
   starter = 1;
   auto const start = std::chrono::high_resolution_clock::now();
 
   while (completed < c.cpus.count()) {
   }
   auto const done = std::chrono::high_resolution_clock::now();
-  std::printf("Result: %g\n", double(done.time_since_epoch().count() -
-                                     start.time_since_epoch().count()) /
-                                  c.size);
+  std::fprintf(::stderr, "%g\n",
+               double(done.time_since_epoch().count() -
+                      start.time_since_epoch().count()) /
+                   c.size);
 
   for (auto &t : threads) {
     t.join();
