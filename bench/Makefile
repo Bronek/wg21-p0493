@@ -1,9 +1,9 @@
 CXX       ?= $(which gcc)
-CXXVER    ?= 17
+CXXVER    ?= 20
 CXXDBG    ?= 0
 CXXOPT    ?= 2
-CXXFLAGS   = -c -Wall -Wextra -Wpedantic -std=c++$(CXXVER) -O$(CXXOPT) -g$(CXXDBG)
-LDFLAGS   ?=
+CXXFLAGS   = -c -Wall -Wextra -Wpedantic -std=c++$(CXXVER) -O$(CXXOPT) -g$(CXXDBG) -pthread
+LDFLAGS   ?= -pthread
 SOURCES    = $(wildcard *.cpp)
 OBJECTS    = $(SOURCES:.cpp=.o)
 OUTPUT     = $(shell basename $(CURDIR))
