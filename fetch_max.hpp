@@ -1,13 +1,36 @@
 #pragma once
 
-#include "config.hpp"
-
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 
-template <config::impl_e> struct atomic_fetch_max;
+/**
+ * @brief enum for different implementation types
+ */
+enum class type_e : std::size_t { strong = 0, weak, smart, hardware };
 
-template <> struct atomic_fetch_max<config::strong> final {
+inline auto format(type_e i) noexcept -> const char * {
+  switch (i) {
+  case type_e::strong:
+    return "strong";
+  case type_e::weak:
+    return "weak";
+  case type_e::smart:
+    return "smart";
+  case type_e::hardware:
+    return "hardware";
+  }
+  return "what?";
+}
+
+/**
+ * @brief templated fetch_max implementation, with varying semantics
+ *
+ * @tparam mpl_e implementation type
+ */
+template <type_e> struct atomic_fetch_max;
+
+template <> struct atomic_fetch_max<type_e::strong> final {
   template <typename T>
   auto operator()(std::atomic<T> *pv, typename std::atomic<T>::value_type v,
                   std::memory_order m) const noexcept -> T {
@@ -20,7 +43,7 @@ template <> struct atomic_fetch_max<config::strong> final {
   }
 };
 
-template <> struct atomic_fetch_max<config::weak> final {
+template <> struct atomic_fetch_max<type_e::weak> final {
   template <typename T>
   auto operator()(std::atomic<T> *pv, typename std::atomic<T>::value_type v,
                   std::memory_order m) const noexcept -> T {
@@ -35,7 +58,7 @@ template <> struct atomic_fetch_max<config::weak> final {
   }
 };
 
-template <> struct atomic_fetch_max<config::smart> final {
+template <> struct atomic_fetch_max<type_e::smart> final {
   template <typename T>
   auto operator()(std::atomic<T> *pv, typename std::atomic<T>::value_type v,
                   std::memory_order m) const noexcept -> T {
@@ -58,4 +81,4 @@ template <> struct atomic_fetch_max<config::smart> final {
 };
 
 // TODO
-template <> struct atomic_fetch_max<config::hardware>;
+template <> struct atomic_fetch_max<type_e::hardware>;

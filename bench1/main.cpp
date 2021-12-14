@@ -1,3 +1,4 @@
+#include "../fetch_max.hpp"
 #include "config.hpp"
 #include "queue.hpp"
 #include "runner.hpp"
@@ -12,11 +13,11 @@ void usage(char const *p_) noexcept {
       ::stderr,
       "Proposal P0493 benchmark runner\n\n"
       "Example usage:\n"
-      "%s -c 8 -i w -s l\n\n"
+      "%s -c 8 -t w -s l\n\n"
       "Where:\n"
       "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
       "parameter between 1 and %u\n"
-      "-i one character to denote the implementation of fetch_max, valid: "
+      "-t one character to denote the type of fetch_max, valid: "
       "s(trong), w(eak), (smar)t and h(ardware), defaults to s\n"
       "-s one character to denote the size of the queue, valid: s(mall), "
       "m(edium), l(arge) and x(tra-large), defaults to m\n\n"
@@ -33,7 +34,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
     return false;
   }
   dest.size = config::medium;
-  dest.impl = config::strong;
+  dest.impl = type_e::strong;
 
   int i = 1;
   for (; i + 1 < argc; i += 2) {
@@ -60,19 +61,19 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       for (int j = 0; j < cpus; ++j) {
         dest.cpus.set(j);
       }
-    } else if (sel == "-i") {
+    } else if (sel == "-t") {
       if (opt == "s") {
-        dest.impl = config::strong;
+        dest.impl = type_e::strong;
       } else if (opt == "w") {
-        dest.impl = config::weak;
+        dest.impl = type_e::weak;
       } else if (opt == "t") {
-        dest.impl = config::smart;
+        dest.impl = type_e::smart;
       } else if (opt == "h") {
-        dest.impl = config::hardware;
-        fprintf(::stderr, "Not implemented: -i %s\n", format(dest.impl));
+        dest.impl = type_e::hardware;
+        fprintf(::stderr, "Not implemented: -t %s\n", format(dest.impl));
         return false;
       } else {
-        fprintf(::stderr, "Cannot parse: -i %s\n", opt.c_str());
+        fprintf(::stderr, "Cannot parse: -t %s\n", opt.c_str());
         return false;
       }
     } else if (sel == "-s") {
@@ -118,31 +119,31 @@ auto main(int argc, char **argv) noexcept -> int {
   config config{};
   if (parse(config, argc, argv)) {
     // translate runtime to compile-time in a large switch statement
-    switch (config.size + config.impl) {
-    case (config::small + config::strong):
-      return runner<config::small, config::strong>{}(config.cpus);
-    case (config::small + config::weak):
-      return runner<config::small, config::weak>{}(config.cpus);
-    case (config::small + config::smart):
-      return runner<config::small, config::smart>{}(config.cpus);
-    case (config::medium + config::strong):
-      return runner<config::medium, config::strong>{}(config.cpus);
-    case (config::medium + config::weak):
-      return runner<config::medium, config::weak>{}(config.cpus);
-    case (config::medium + config::smart):
-      return runner<config::medium, config::smart>{}(config.cpus);
-    case (config::large + config::strong):
-      return runner<config::large, config::strong>{}(config.cpus);
-    case (config::large + config::weak):
-      return runner<config::large, config::weak>{}(config.cpus);
-    case (config::large + config::smart):
-      return runner<config::large, config::smart>{}(config.cpus);
-    case (config::xlarge + config::strong):
-      return runner<config::xlarge, config::strong>{}(config.cpus);
-    case (config::xlarge + config::weak):
-      return runner<config::xlarge, config::weak>{}(config.cpus);
-    case (config::xlarge + config::smart):
-      return runner<config::xlarge, config::smart>{}(config.cpus);
+    switch (config.size + (size_t)config.impl) {
+    case (config::small + (size_t)type_e::strong):
+      return runner<config::small, type_e::strong>{}(config.cpus);
+    case (config::small + (size_t)type_e::weak):
+      return runner<config::small, type_e::weak>{}(config.cpus);
+    case (config::small + (size_t)type_e::smart):
+      return runner<config::small, type_e::smart>{}(config.cpus);
+    case (config::medium + (size_t)type_e::strong):
+      return runner<config::medium, type_e::strong>{}(config.cpus);
+    case (config::medium + (size_t)type_e::weak):
+      return runner<config::medium, type_e::weak>{}(config.cpus);
+    case (config::medium + (size_t)type_e::smart):
+      return runner<config::medium, type_e::smart>{}(config.cpus);
+    case (config::large + (size_t)type_e::strong):
+      return runner<config::large, type_e::strong>{}(config.cpus);
+    case (config::large + (size_t)type_e::weak):
+      return runner<config::large, type_e::weak>{}(config.cpus);
+    case (config::large + (size_t)type_e::smart):
+      return runner<config::large, type_e::smart>{}(config.cpus);
+    case (config::xlarge + (size_t)type_e::strong):
+      return runner<config::xlarge, type_e::strong>{}(config.cpus);
+    case (config::xlarge + (size_t)type_e::weak):
+      return runner<config::xlarge, type_e::weak>{}(config.cpus);
+    case (config::xlarge + (size_t)type_e::smart):
+      return runner<config::xlarge, type_e::smart>{}(config.cpus);
     }
   }
 

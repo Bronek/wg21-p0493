@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../fetch_max.hpp"
+#include "../stats.hpp"
 #include "config.hpp"
-#include "fetch_max.hpp"
 #include "queue.hpp"
-#include "stats.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -18,7 +18,7 @@ struct dummy {
   long payload[7] = {};
 };
 
-template <std::size_t Size_, config::impl_e Impl_> struct runner final {
+template <std::size_t Size_, type_e Impl_> struct runner final {
   auto operator()(std::bitset<config::max_cpus> const &cpus) noexcept -> int {
     using namespace std;
 
