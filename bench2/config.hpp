@@ -12,4 +12,5 @@ struct config {
   std::bitset<max_cpus> cpus{};
   std::size_t iter{0};
   int seed{0};
+  double max_sigma{0};
 };

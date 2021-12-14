@@ -16,10 +16,10 @@
 #include <pthread.h> // for pthread_getaffinity_np
 
 template <type_e Impl_> struct runner final {
-  auto operator()(std::bitset<config::max_cpus> const &cpus, //
-                  std::size_t iter,                          //
-                  int seed) noexcept -> int {
-    std::array<double, config::max_cpus> results = {};
+  auto operator()(config const &config) noexcept -> int {
+    static constexpr int inner_iters = 10000;
+
+    std::array<std::vector<double>, config::max_cpus> results = {};
     std::atomic<int> max = std::numeric_limits<int>::min();
     static constexpr atomic_fetch_max<Impl_> fetch_max{};
 
@@ -40,12 +40,13 @@ template <type_e Impl_> struct runner final {
       std::atomic<uint64_t> started = {0};
       std::atomic<int> starter = {0};
 
-      for (size_t i = 0; i < cpus.size(); ++i) {
-        if (!cpus.test(i)) {
+      for (size_t i = 0; i < config.cpus.size(); ++i) {
+        if (!config.cpus.test(i)) {
           continue;
         }
 
         threads.emplace_back([&, cpu = i]() noexcept {
+          results[cpu].reserve((config.iter / inner_iters) + 1);
           cpu_set_t cpuset;
           CPU_ZERO(&cpuset);
           CPU_SET(cpu, &cpuset);
@@ -57,7 +58,7 @@ template <type_e Impl_> struct runner final {
           }
 
           // Choose a random mean between 1 and 6
-          std::ranlux24 r{seed + cpu};
+          std::ranlux24 r{config.seed + cpu};
           std::uniform_int_distribution<int> dist(-1e9, 1e9);
           // warm up PRNG
           for (int i = 0; i < 100; ++i) {
@@ -70,22 +71,20 @@ template <type_e Impl_> struct runner final {
           while (starter.load(std::memory_order_acquire) == 0) {
           }
 
-          std::size_t i = 0; // count iterations
-          auto const start = std::chrono::high_resolution_clock::now();
-          while (i < iter) {
-            fetch_max(&max, dist(r), std::memory_order_release);
-            i++;
+          for (std::size_t i = 0; i < config.iter; i += inner_iters) {
+            auto const start = std::chrono::high_resolution_clock::now();
+            for (std::size_t j = 0; j < inner_iters; ++j) {
+              (void)fetch_max(&max, dist(r), std::memory_order_release);
+            }
+            auto const done = std::chrono::high_resolution_clock::now();
+            auto const time = (double)done.time_since_epoch().count() -
+                              start.time_since_epoch().count();
+            results[cpu].push_back(time / inner_iters);
           }
-          auto const done = std::chrono::high_resolution_clock::now();
-          auto const time = (double)done.time_since_epoch().count() -
-                            start.time_since_epoch().count();
-
-          // store time per iteration
-          results[cpu] = time / i;
         });
       }
 
-      while (started < cpus.count()) {
+      while (started < config.cpus.count()) {
       }
       starter = 1;
 
@@ -95,45 +94,44 @@ template <type_e Impl_> struct runner final {
     } // join all threads
 
     double minimum_3s = 0; // three sigma minimum cost of PRNG
-    double max_s = 0.5;    // maximum sigma to complete calibration
     while (true) {
-      std::ranlux24 r{(std::size_t)seed};
+      std::ranlux24 r{(std::size_t)config.seed};
       std::uniform_int_distribution<int> dist(-1e9, 1e9);
       // warm up PRNG
       for (int j = 0; j < 100; ++j) {
         (void)dist(r);
       }
 
-      static constexpr int calib_inner_iters = 10000;
       stats s1{};
       for (int i = 0; i < 100; ++i) {
         auto const start = std::chrono::high_resolution_clock::now();
-        for (int j = 0; j < calib_inner_iters; ++j) {
+        for (int j = 0; j < inner_iters; ++j) {
           (void)dist(r);
         }
         auto const done = std::chrono::high_resolution_clock::now();
         auto const time = (double)done.time_since_epoch().count() -
                           start.time_since_epoch().count();
-        s1.push(time / (double)calib_inner_iters);
+        s1.push(time / (double)inner_iters);
       }
 
-      if (s1.stdev() < max_s) {
+      if (s1.stdev() < config.max_sigma) {
         minimum_3s = std::max(0.0, (s1.mean() - s1.stdev() * 3));
-        std::fprintf(::stderr, "Calibration: %g\n\n", minimum_3s);
+        std::fprintf(::stderr, "Calibration: %g (%g)\n\n", minimum_3s, s1.stdev());
         break;
       }
     }
 
     stats s2{};
-    for (size_t i = 0; i < cpus.size(); ++i) {
-      if (!cpus.test(i)) {
+    for (size_t i = 0; i < config.cpus.size(); ++i) {
+      if (!config.cpus.test(i)) {
         continue;
       }
-      auto const r = results[i];
-      s2.push(r - minimum_3s);
+      for (auto r : results[i]) {
+        s2.push(r - minimum_3s);
+      }
     }
 
-    std::printf("%lu\t%g\t(%g)\n", cpus.count(), s2.mean(), s2.stdev());
+    std::printf("%lu\t%g\t%g\n", config.cpus.count(), s2.mean(), s2.stdev());
     return 0;
   }
 };
