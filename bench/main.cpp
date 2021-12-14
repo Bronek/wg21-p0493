@@ -1,166 +1,141 @@
+#include "config.hpp"
 #include "queue.hpp"
-
-#include <atomic>
-#include <bitset>
-#include <chrono>
-#include <stdexcept>
-#include <thread>
-#include <vector>
+#include "runner.hpp"
 
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
-
-#include <pthread.h> // for pthread_getaffinity_np
-
-struct config {
-  std::bitset<64> cpus;
-  uint64_t size;
-
-  friend auto parse(config &dest, std::string c, std::string s) noexcept
-      -> bool {
-    if (c.empty() || s.empty()) {
-      return false;
-    }
-
-    try {
-      dest.cpus = decltype(dest.cpus){c};
-
-      decltype(config::size) multiplier = 1;
-      auto last = --s.end();
-      switch (*last) {
-      case 'k':
-        multiplier = 1000;
-        s.erase(last, s.end());
-        break;
-      case 'K':
-        multiplier = 1024;
-        s.erase(last, s.end());
-        break;
-      case 'm':
-        multiplier = 1000'000;
-        s.erase(last, s.end());
-        break;
-      case 'M':
-        multiplier = 1024 * 1024;
-        s.erase(last, s.end());
-        break;
-      }
-      size_t n = 0;
-      dest.size = stoull(s, &n);
-      if (n != s.size()) {
-        throw std::invalid_argument("Unable to parse " + s);
-      }
-      dest.size *= multiplier;
-    } catch (std::exception const &e) {
-      std::fprintf(::stderr, "Bad program argument: %s\n\n", e.what());
-      return false;
-    }
-
-    std::printf("Cores: %s (%lu)\n", dest.cpus.to_string().c_str(),
-                dest.cpus.count());
-    std::printf("Size: %lu\n", dest.size);
-    return true;
-  }
-};
-
-auto run(config const &c) noexcept -> int {
-  using namespace std;
-  vector<thread> threads;
-  std::atomic<uint64_t> started = {0};
-  std::atomic<int> starter = {0};
-  std::atomic<uint64_t> completed = {0};
-  struct dummy {
-    constexpr dummy() noexcept = default;
-    long payload[7] = {};
-  };
-
-  queue_t<dummy> queue{c.size};
-  constexpr int error = 512;
-
-  for (size_t i = 0; i < c.cpus.size(); ++i) {
-    if (!c.cpus.test(i)) {
-      continue;
-    }
-
-    threads.emplace_back([&, cpu = i, count = (int)c.cpus.count(),
-                          size = (int64_t)c.size]() noexcept {
-      cpu_set_t cpuset;
-      CPU_ZERO(&cpuset);
-      CPU_SET(cpu, &cpuset);
-      if (0 !=
-          pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset)) {
-        std::fprintf(::stderr, "Unable to pin CPU: %li\n\n", cpu);
-        started += error;
-        return;
-      }
-      std::printf("thread %lu on %li\n", pthread_self(), cpu);
-
-      started += 1;
-
-      // spin to ensure all threads kick off at the same time
-      while (starter.load(std::memory_order_relaxed) == 0) {
-      }
-
-      while (enqueue(queue, dummy{},
-                     [size](int64_t count) noexcept { return count < size; })) {
-      }
-
-      completed += 1;
-    });
-  }
-
-  while (started < c.cpus.count()) {
-  }
-
-  // check if error
-  if (started >= error) {
-    starter = 1;
-    for (auto &t : threads) {
-      t.join();
-    }
-    return 1;
-  }
-
-  starter = 1;
-  auto const start = std::chrono::high_resolution_clock::now();
-
-  while (completed < c.cpus.count()) {
-  }
-  auto const done = std::chrono::high_resolution_clock::now();
-  std::fprintf(::stderr, "%g\n",
-               double(done.time_since_epoch().count() -
-                      start.time_since_epoch().count()) /
-                   c.size);
-
-  for (auto &t : threads) {
-    t.join();
-  }
-  return 0;
-}
+#include <string>
 
 void usage(char const *p_) noexcept {
   using namespace std;
-  puts("Proposal P0493 benchmark runner\n\nExample usage:\n");
-  printf("%s -c 1110 -s 100K\n\n", p_);
-  puts("Where:\n-c cores to run on (as parsed by bitset ctor)");
-  puts("-s size of the queue to fill, with optional multiplier suffix: k=1e3, "
-       "K=2^10, m=1e6, M=2^20, g=1e9, G=2^30\n");
-  puts("The example above will fill 102400 large queue using 3 threads, "
-       "running on cores 1, 2, and 3 (skipping core 0)\n");
+  fprintf(
+      ::stderr,
+      "Proposal P0493 benchmark runner\n\n"
+      "Example usage:\n"
+      "%s -c 8 -i w -s l\n\n"
+      "Where:\n"
+      "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
+      "parameter between 1 and %u\n"
+      "-i one character to denote the implementation of fetch_max, valid: "
+      "s(trong), w(eak), (smar)t and h(ardware), defaults to s\n"
+      "-s one character to denote the size of the queue, valid: s(mall)m "
+      "m(edium) and l(arge), defaults to m\n\n"
+      "The example above will fill a large queue using 8 threads (pinned to "
+      "cores 0-7), using weak fetch_max\n\n"
+      "Note: benchmark results go to stdout, all other messages to stderr\n\n",
+      p_, config::max_cpus);
+}
+
+auto parse(config &dest, int argc, char **argv) noexcept -> bool {
+  using namespace std;
+  if (argc < 3) {
+    usage(argv[0]);
+    return false;
+  }
+  dest.size = config::medium;
+  dest.impl = config::strong;
+
+  int i = 1;
+  for (; i + 1 < argc; i += 2) {
+    string const sel = argv[i];
+    string const opt = argv[i + 1];
+    if (sel == "-c") {
+      size_t last = 0;
+      int cpus = 0;
+      try {
+        cpus = stoi(opt, &last);
+      } catch (std::exception &) {
+        fprintf(::stderr, "Cannot parse: -c %s\n", opt.c_str());
+        return false;
+      }
+
+      if (last != opt.size()) {
+        fprintf(::stderr, "Cannot parse: -c %s\n", opt.c_str());
+        return false;
+      } else if (cpus < 1 || cpus > config::max_cpus) {
+        fprintf(::stderr, "Out of range: %i\n", cpus);
+        return false;
+      }
+
+      for (int j = 0; j < cpus; ++j) {
+        dest.cpus.set(j);
+      }
+    } else if (sel == "-i") {
+      if (opt == "s") {
+        dest.impl = config::strong;
+      } else if (opt == "w") {
+        dest.impl = config::weak;
+      } else if (opt == "t") {
+        dest.impl = config::smart;
+      } else if (opt == "h") {
+        dest.impl = config::hardware;
+        fprintf(::stderr, "Not implemented: -i %s\n", format(dest.impl));
+        return false;
+      } else {
+        fprintf(::stderr, "Cannot parse: -i %s\n", opt.c_str());
+        return false;
+      }
+    } else if (sel == "-s") {
+      if (opt == "s") {
+        dest.size = config::small;
+      } else if (opt == "m") {
+        dest.size = config::medium;
+      } else if (opt == "l") {
+        dest.size = config::large;
+      } else {
+        fprintf(::stderr, "Cannot parse: -s %s\n", opt.c_str());
+        return false;
+      }
+    } else {
+      usage(argv[0]);
+      return false;
+    }
+  }
+
+  if (i != argc) {
+    usage(argv[0]);
+    return false;
+  }
+
+  if (dest.cpus.count() == 0) {
+    fprintf(::stderr, "Missing mandatory -c parameter\n");
+    return false;
+  }
+
+  fprintf(::stderr,
+          "Will use:\n\n%lu core(s)\n"
+          "%s implementation\n"
+          "%lu sized queue\n\n",
+          dest.cpus.count(), format(dest.impl), dest.size);
+
+  return true;
 }
 
 auto main(int argc, char **argv) noexcept -> int {
   using namespace std;
-  if (argc == 5 &&
-      (strlen(argv[1]) == 2 && argv[1][0] == '-' && argv[1][1] == 'c') &&
-      (strlen(argv[3]) == 2 && argv[3][0] == '-' && argv[3][1] == 's')) {
-    config c = {};
-    if (parse(c, argv[2], argv[4])) {
-      return run(c);
+  config config{};
+  if (parse(config, argc, argv)) {
+    // translate runtime to compile-time in a large switch statement
+    switch (config.size + config.impl) {
+    case (config::small + config::strong):
+      return runner<config::small, config::strong>{}(config.cpus);
+    case (config::small + config::weak):
+      return runner<config::small, config::weak>{}(config.cpus);
+    case (config::small + config::smart):
+      return runner<config::small, config::smart>{}(config.cpus);
+    case (config::medium + config::strong):
+      return runner<config::medium, config::strong>{}(config.cpus);
+    case (config::medium + config::weak):
+      return runner<config::medium, config::weak>{}(config.cpus);
+    case (config::medium + config::smart):
+      return runner<config::medium, config::smart>{}(config.cpus);
+    case (config::large + config::strong):
+      return runner<config::large, config::strong>{}(config.cpus);
+    case (config::large + config::weak):
+      return runner<config::large, config::weak>{}(config.cpus);
+    case (config::large + config::smart):
+      return runner<config::large, config::smart>{}(config.cpus);
     }
-  } else {
-    usage(argv[0]);
   }
 
   return 1;
