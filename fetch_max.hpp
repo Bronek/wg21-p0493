@@ -81,4 +81,9 @@ template <> struct atomic_fetch_max<type_e::smart> final {
 };
 
 // TODO
-template <> struct atomic_fetch_max<type_e::hardware>;
+template <> struct atomic_fetch_max<type_e::hardware> final {
+  auto operator()(std::atomic<int> *, int, std::memory_order) const noexcept
+      -> int {
+    __builtin_unreachable();
+  }
+};
