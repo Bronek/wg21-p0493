@@ -72,8 +72,6 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         dest.impl = type_e::smart;
       } else if (opt == "h") {
         dest.impl = type_e::hardware;
-        fprintf(::stderr, "Not implemented: -t %s\n", format(dest.impl));
-        return false;
       } else {
         fprintf(::stderr, "Cannot parse: -t %s\n", opt.c_str());
         return false;

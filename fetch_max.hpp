@@ -82,8 +82,37 @@ template <> struct atomic_fetch_max<type_e::smart> final {
 
 // TODO
 template <> struct atomic_fetch_max<type_e::hardware> final {
+#if defined(__ARM_ARCH_8A)
+  auto operator()(std::atomic<int> *pv, int v,
+                  std::memory_order m) const noexcept -> int {
+    using namespace std;
+    int x;
+    if (m == memory_order_relaxed)
+      __asm__ __volatile__("ldsmax %w1,%w0,[%2]" : "=r"(x) : "r"(v), "r"(pv) :);
+    else if (m == memory_order_release)
+      __asm__ __volatile__("ldsmaxl %w1,%w0,[%2]"
+                           : "=r"(x)
+                           : "r"(v), "r"(pv)
+                           :);
+    else if (m == memory_order_acquire || m == memory_order_consume)
+      __asm__ __volatile__("ldsmaxa %w1,%w0,[%2]"
+                           : "=r"(x)
+                           : "r"(v), "r"(pv)
+                           :);
+    else if (m == memory_order_acq_rel || m == memory_order_seq_cst)
+      __asm__ __volatile__("ldsmaxal %w1,%w0,[%2]"
+                           : "=r"(x)
+                           : "r"(v), "r"(pv)
+                           :);
+    else {
+      __builtin_unreachable();
+    }
+    return x;
+  }
+#else
   auto operator()(std::atomic<int> *, int, std::memory_order) const noexcept
       -> int {
     __builtin_unreachable();
   }
+#endif
 };
