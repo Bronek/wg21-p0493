@@ -18,8 +18,8 @@ void usage(char const *p_) noexcept {
       "parameter between 1 and %u\n"
       "-i one character to denote the implementation of fetch_max, valid: "
       "s(trong), w(eak), (smar)t and h(ardware), defaults to s\n"
-      "-s one character to denote the size of the queue, valid: s(mall)m "
-      "m(edium) and l(arge), defaults to m\n\n"
+      "-s one character to denote the size of the queue, valid: s(mall), "
+      "m(edium), l(arge) and x(tra-large), defaults to m\n\n"
       "The example above will fill a large queue using 8 threads (pinned to "
       "cores 0-7), using weak fetch_max\n\n"
       "Note: benchmark results go to stdout, all other messages to stderr\n\n",
@@ -82,6 +82,8 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         dest.size = config::medium;
       } else if (opt == "l") {
         dest.size = config::large;
+      } else if (opt == "x") {
+        dest.size = config::xlarge;
       } else {
         fprintf(::stderr, "Cannot parse: -s %s\n", opt.c_str());
         return false;
@@ -135,6 +137,12 @@ auto main(int argc, char **argv) noexcept -> int {
       return runner<config::large, config::weak>{}(config.cpus);
     case (config::large + config::smart):
       return runner<config::large, config::smart>{}(config.cpus);
+    case (config::xlarge + config::strong):
+      return runner<config::xlarge, config::strong>{}(config.cpus);
+    case (config::xlarge + config::weak):
+      return runner<config::xlarge, config::weak>{}(config.cpus);
+    case (config::xlarge + config::smart):
+      return runner<config::xlarge, config::smart>{}(config.cpus);
     }
   }
 
