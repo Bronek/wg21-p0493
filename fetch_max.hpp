@@ -30,13 +30,21 @@ inline auto format(type_e i) noexcept -> const char * {
  */
 template <type_e> struct atomic_fetch_max;
 
+inline std::memory_order drop_release(std::memory_order m) noexcept {
+  return (m == std::memory_order_release ? std::memory_order_relaxed
+                                         : ((m == std::memory_order_acq_rel ||
+                                             m == std::memory_order_seq_cst)
+                                                ? std::memory_order_acquire
+                                                : m));
+}
+
 template <> struct atomic_fetch_max<type_e::strong> final {
   template <typename T>
   auto operator()(std::atomic<T> *pv, typename std::atomic<T>::value_type v,
                   std::memory_order m) const noexcept -> T {
     using std::max;
 
-    auto t = pv->load(m);
+    auto t = pv->load(drop_release(m));
     while (!pv->compare_exchange_weak(t, max(v, t), m, m))
       ;
     return t;
@@ -49,7 +57,7 @@ template <> struct atomic_fetch_max<type_e::weak> final {
                   std::memory_order m) const noexcept -> T {
     using std::max;
 
-    auto t = pv->load(m);
+    auto t = pv->load(drop_release(m));
     while (max(v, t) != t) {
       if (pv->compare_exchange_weak(t, v, m, m))
         break;
@@ -64,7 +72,7 @@ template <> struct atomic_fetch_max<type_e::smart> final {
                   std::memory_order m) const noexcept -> T {
     using std::max;
 
-    auto t = pv->load(m);
+    auto t = pv->load(drop_release(m));
     while (max(v, t) != t) {
       if (pv->compare_exchange_weak(t, v, m, m))
         return t;
