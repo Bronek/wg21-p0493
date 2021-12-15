@@ -43,12 +43,22 @@ template <type_e Impl_> struct runner final {
     return (time / (double)iters);
   }
 
+  struct alignas(0x10000) max_holder { // 64K
+    std::atomic<int> max = {std::numeric_limits<int>::min()};
+  };
+
+  template <std::size_t Size_> struct max_array {
+    std::array<max_holder, Size_> array = {};
+    std::array<std::atomic<std::size_t>, Size_> waiting = {};
+  };
+
   auto operator()(config const &config) noexcept -> int {
 
-    // one and the only shared cache line for tests
-    std::atomic<int> max{std::numeric_limits<int>::min()};
     static constexpr atomic_fetch_max<Impl_> fetch_max{};
     static constexpr int inner_iters = 10'000;
+    static constexpr std::size_t array_size = 0x1000;
+
+    auto max = std::make_unique<max_array<array_size>>();
 
     alignas(64) std::array<std::vector<double>, config::max_cpus> results = {};
 
@@ -67,7 +77,7 @@ template <type_e Impl_> struct runner final {
 
       static constexpr uint64_t error = config::max_cpus << 1;
       std::atomic<uint64_t> started = {0};
-      std::atomic<int> starter = {0};
+      std::atomic<int> barrier = {0};
 
       for (size_t i = 0; i < config.cpus.size(); ++i) {
         if (!config.cpus.test(i)) {
@@ -86,29 +96,46 @@ template <type_e Impl_> struct runner final {
           std::uniform_int_distribution<int> dist(-1e9, 1e9);
           // warm up PRNG
           for (int i = 0; i < 100; ++i) {
-            fetch_max(&max, dist(r), std::memory_order_relaxed);
+            sample<inner_iters>(r, dist, [&](int i) noexcept -> int {
+              return fetch_max(&max->array[0].max, i,
+                               std::memory_order_release);
+            });
           }
 
           started += 1;
 
-          // spin to ensure all threads kick off at the same time
-          while (starter.load(std::memory_order_acquire) == 0) {
-          }
-
+          int index = 1;
           for (auto &s : results[cpu]) {
+            max->waiting[index] += 1;
+            // spin to ensure all threads kick off at the same time
+            while (started.load(std::memory_order_acquire) < error &&
+                   barrier.load(std::memory_order_acquire) != index) {
+              if (started.load(std::memory_order_acquire) >= error) {
+                return;
+              }
+            }
+
+            auto const j = index % array_size;
             s = sample<inner_iters>(r, dist, [&](int i) noexcept -> int {
-              return fetch_max(&max, i, std::memory_order_release);
+              return fetch_max(&max->array[j].max, i,
+                               std::memory_order_release);
             });
+            index += 1;
           }
         });
       }
 
       while (started < config.cpus.count()) {
       }
-      starter = 1;
-
-      if (started > config::max_cpus) {
+      if (started >= error) {
         return 1;
+      }
+
+      int index = 1;
+      for (std::size_t i = 0; i < (config.iter / inner_iters) + 1; ++i) {
+        while (max->waiting[index] != config.cpus.count()) {
+        }
+        barrier = index++;
       }
     } // join all threads
 
