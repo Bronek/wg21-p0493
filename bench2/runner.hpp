@@ -165,7 +165,7 @@ template <type_e Impl_> struct runner final {
       }
 
       if (s1.stdev() < config.max_sigma) {
-        prng_cost = std::max(0.0, (s1.mean() - s1.stdev() * 3));
+        prng_cost = std::max(0.0, (s1.mean() - s1.stdev() * 5));
         std::fprintf(::stderr, "Calibration: %g (%g)\n\n", prng_cost,
                      s1.stdev());
         break;
