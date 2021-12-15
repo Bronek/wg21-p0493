@@ -57,13 +57,19 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       if (last != opt.size()) {
         fprintf(::stderr, "Cannot parse: -c %s\n", opt.c_str());
         return false;
-      } else if (cpus < 1 || cpus > config::max_cpus) {
-        fprintf(::stderr, "Out of range: -c %i\n", cpus);
+      } else if (cpus < 1) {
+        fprintf(::stderr, "Out of range (too low): -c %i\n", cpus);
         return false;
       }
 
-      for (int j = 0; j < cpus; ++j) {
-        dest.cpus.set(j);
+      // Start at CPU 1 which is first isolated
+      for (int j = 1; j <= cpus; ++j) {
+        dest.cpus.set(j % config::max_cpus);
+      }
+
+      if ((int)dest.cpus.count() != cpus) {
+        fprintf(::stderr, "Out of range (too high): -c %i\n", cpus);
+        return false;
       }
     } else if (sel == "-t") {
       if (opt == "s") {
@@ -86,8 +92,8 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         return false;
       }
       dest.iter = d;
-      if (dest.iter < 1) {
-        fprintf(::stderr, "Out of range: -i %lu\n", dest.iter);
+      if (dest.iter < 100) {
+        fprintf(::stderr, "Out of range (too low): -i %lu\n", dest.iter);
         return false;
       }
     } else if (sel == "-s") {
@@ -110,7 +116,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       }
       dest.max_sigma = d;
       if (dest.max_sigma <= 0) {
-        fprintf(::stderr, "Out of range: -m %lu\n", dest.iter);
+        fprintf(::stderr, "Out of range (too low): -m %lu\n", dest.iter);
         return false;
       }
     } else {
@@ -139,8 +145,10 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
           "Will use:\n\n%lu core(s)\n"
           "%s implementation\n"
           "%lu iterations\n"
+          "%g max. sigma\n"
           "%u seed\n\n",
-          dest.cpus.count(), format(dest.impl), dest.iter, dest.seed);
+          dest.cpus.count(), format(dest.impl), dest.iter, dest.max_sigma,
+          dest.seed);
 
   return true;
 }
