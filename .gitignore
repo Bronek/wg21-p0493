@@ -1,6 +1,4 @@
 generated/
-bench1/*.o
-bench1/bench1
-bench2/*.o
-bench2/bench2
+bench/*.o
+bench/bench
 .vscode

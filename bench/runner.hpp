@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../fetch_max.hpp"
-#include "../stats.hpp"
+#include "stats.hpp"
 #include "config.hpp"
 
 #include <atomic>

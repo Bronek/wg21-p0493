@@ -14,7 +14,7 @@ void usage(char const *p_) noexcept {
       ::stderr,
       "Proposal P0493 benchmark runner\n\n"
       "Example usage:\n"
-      "%s -c 8 -t w -i 1e6 -s 42 -m 0.5\n\n"
+      "%s -c 8 -t w -i 1e6 -s 42 -m 2.5\n\n"
       "Where:\n"
       "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
       "parameter between 1 and %u\n"
@@ -24,7 +24,7 @@ void usage(char const *p_) noexcept {
       "-s random seed, defaults to clock\n"
       "-m maximum sigma for calibration, default 1.0\n\n"
       "The example above will iterate 1e6 times using 8 threads (pinned to "
-      "cores 0-7), using weak fetch_max and max_sigma 0.5\n\n"
+      "cores 0-7), using weak fetch_max and max_sigma 2.5\n\n"
       "Note: benchmark results go to stdout, all other messages to stderr\n\n",
       p_, config::max_cpus);
 }
