@@ -1,11 +1,14 @@
 #pragma once
 
 #include "../fetch_max.hpp"
-#include "stats.hpp"
 #include "config.hpp"
+#include "latch.hpp"
+#include "stats.hpp"
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <random>
@@ -43,23 +46,51 @@ template <type_e Impl_> struct runner final {
     return (time / (double)iters);
   }
 
-  struct alignas(0x10000) max_holder { // 64K
-    std::atomic<int> max = {std::numeric_limits<int>::min()};
-  };
+  // Max should be placed on different memory pages on different runs
+  static constexpr std::size_t max_alignment = 0x1000; // 4K
+  struct alignas(max_alignment) max_holder final {
+    std::atomic<int> max{};
 
-  template <std::size_t Size_> struct max_array {
-    std::array<max_holder, Size_> array = {};
-    std::array<std::atomic<std::size_t>, Size_> waiting = {};
+    void reset(int cpus) noexcept {
+      max = 0;
+      // Must reset() first because we reuse memory locations
+      latch1.reset();
+      latch1.reset(new (&latches_[0]) latch_t(cpus));
+      latch2.reset();
+      latch2.reset(new (&latches_[1]) latch_t(cpus));
+    }
+    void arrive_and_wait() noexcept { latch1->arrive_and_wait(1); }
+    void count_down() noexcept { latch2->count_down(1); }
+    void wait() const noexcept { latch2->wait(); }
+
+  private:
+    using latch_t = ::latch; // In the absence of std::latch at this time
+
+    struct alignas(alignof(latch_t)) placeholder final {
+      char _b[sizeof(latch_t)];
+    } latches_[2];
+    struct destroyer final {
+      void operator()(latch_t *p) noexcept { p->~latch_t(); }
+    };
+    std::unique_ptr<latch_t, destroyer> latch1{};
+    std::unique_ptr<latch_t, destroyer> latch2{};
   };
+  static_assert(sizeof(max_holder) == max_alignment);
 
   auto operator()(config const &config) noexcept -> int {
-
     static constexpr atomic_fetch_max<Impl_> fetch_max{};
     static constexpr int inner_iters = 10'000;
-    static constexpr std::size_t array_size = 0x1000;
+    static constexpr int warmup_iters = 1'000;
+    static constexpr std::size_t array_size = 0x100;
 
-    auto max = std::make_unique<max_array<array_size>>();
+    std::array<max_holder, array_size> max_array{};
+    std::size_t const cpus = config.cpus.count();
+    for (auto &m : max_array) {
+      m.reset(cpus);
+    }
 
+    std::atomic<bool> error = {0};
+    auto const runs = 1 + (config.iter - 1) / inner_iters;
     alignas(64) std::array<std::vector<double>, config::max_cpus> results = {};
 
     {
@@ -75,67 +106,48 @@ template <type_e Impl_> struct runner final {
         }
       } join(&threads);
 
-      static constexpr uint64_t error = config::max_cpus << 1;
-      std::atomic<uint64_t> started = {0};
-      std::atomic<int> barrier = {0};
-
-      for (size_t i = 0; i < config.cpus.size(); ++i) {
+      for (std::size_t i = 0; i < config.cpus.size(); ++i) {
         if (!config.cpus.test(i)) {
           continue;
         }
 
         threads.emplace_back([&, cpu = i]() noexcept {
-          results[cpu].resize((config.iter / inner_iters) + 1);
-          if (!pin_cpu(cpu)) {
-            started |= error;
-            return;
-          }
-
-          // Choose a random mean between 1 and 6
+          results[cpu].resize(runs);
           std::ranlux24 r{config.seed + cpu};
-          std::uniform_int_distribution<int> dist(-1e9, 1e9);
-          // warm up PRNG
-          for (int i = 0; i < 100; ++i) {
-            sample<inner_iters>(r, dist, [&](int i) noexcept -> int {
-              return fetch_max(&max->array[0].max, i,
-                               std::memory_order_release);
-            });
+          std::uniform_int_distribution<int> dist(0, 2e9);
+
+          if (!pin_cpu(cpu)) {
+            error = true;
           }
 
-          started += 1;
+          for (std::size_t i = 0, j = 0; j < runs; ++j) {
+            auto &m = max_array[i];
+            sample<warmup_iters>(r, dist, [&](int n) noexcept -> int {
+              return fetch_max(&m.max, n, std::memory_order_release);
+            });
 
-          int index = 1;
-          for (auto &s : results[cpu]) {
-            max->waiting[index] += 1;
-            // spin to ensure all threads kick off at the same time
-            while (started.load(std::memory_order_acquire) < error &&
-                   barrier.load(std::memory_order_acquire) != index) {
-              if (started.load(std::memory_order_acquire) >= error) {
-                return;
-              }
+            m.arrive_and_wait();
+            if (!error) {
+              auto &s = results[cpu][j];
+              s = sample<inner_iters>(r, dist, [&](int n) noexcept -> int {
+                return fetch_max(&m.max, n, std::memory_order_release);
+              });
             }
 
-            auto const j = index % array_size;
-            s = sample<inner_iters>(r, dist, [&](int i) noexcept -> int {
-              return fetch_max(&max->array[j].max, i,
-                               std::memory_order_release);
-            });
-            index += 1;
+            m.count_down();
+            i = (i + 1) % array_size;
           }
         });
       }
 
-      while (started < config.cpus.count()) {
-      }
-      if (started >= error) {
-        return 1;
+      for (std::size_t i = 0, j = 0; j < runs; ++j) {
+        max_array[i].wait();
+        max_array[i].reset(cpus);
+        i = (i + 1) % array_size;
       }
 
-      int index = 1;
-      for (std::size_t i = 0; i < (config.iter / inner_iters) + 1; ++i) {
-        while (max->waiting[index] != config.cpus.count()) {
-        }
-        barrier = index++;
+      if (error) {
+        return 1;
       }
     } // join all threads
 
@@ -146,11 +158,8 @@ template <type_e Impl_> struct runner final {
     double prng_cost = 0; // PRNG cost
     while (true) {
       std::ranlux24 r{(std::size_t)config.seed};
-      std::uniform_int_distribution<int> dist(-1e9, 1e9);
-      // warm up PRNG
-      for (int j = 0; j < 100; ++j) {
-        (void)dist(r);
-      }
+      std::uniform_int_distribution<int> dist(0, 2e9);
+      sample<warmup_iters>(r, dist, [&](int i) noexcept -> int { return i; });
 
       std::vector<double> samples = {};
       samples.resize((config.iter / inner_iters) + 1);
@@ -173,7 +182,7 @@ template <type_e Impl_> struct runner final {
     }
 
     stats s2{};
-    for (size_t i = 0; i < config.cpus.size(); ++i) {
+    for (std::size_t i = 0; i < config.cpus.size(); ++i) {
       if (!config.cpus.test(i)) {
         continue;
       }

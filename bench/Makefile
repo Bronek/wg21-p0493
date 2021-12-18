@@ -1,4 +1,4 @@
-CXX       ?= $(which gcc)
+CXX       ?= $(which g++)
 CXXVER    ?= 20
 CXXDBG    ?= 0
 CXXOPT    ?= 3
@@ -18,7 +18,6 @@ $(OUTPUT): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 .PHONY: clean
-
 clean:
 	rm -f $(OBJECTS) $(OUTPUT)
 
