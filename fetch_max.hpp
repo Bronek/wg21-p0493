@@ -9,20 +9,6 @@
  */
 enum class type_e : std::size_t { strong = 0, weak, smart, hardware };
 
-inline auto format(type_e i) noexcept -> const char * {
-  switch (i) {
-  case type_e::strong:
-    return "strong";
-  case type_e::weak:
-    return "weak";
-  case type_e::smart:
-    return "smart";
-  case type_e::hardware:
-    return "hardware";
-  }
-  return "what?";
-}
-
 /**
  * @brief templated fetch_max implementation, with varying semantics
  *

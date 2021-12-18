@@ -123,14 +123,14 @@ template <type_e Impl_> struct runner final {
           for (std::size_t i = 0, j = 0; j < runs; ++j) {
             auto &m = max_array[i];
             sample<warmup_iters>(r, dist, [&](int n) noexcept -> int {
-              return fetch_max(&m.max, n, std::memory_order_release);
+              return fetch_max(&m.max, n, std::memory_order_relaxed);
             });
 
             m.arrive_and_wait();
             if (!error) {
               auto &s = results[cpu][j];
               s = sample<inner_iters>(r, dist, [&](int n) noexcept -> int {
-                return fetch_max(&m.max, n, std::memory_order_release);
+                return fetch_max(&m.max, n, config.operation);
               });
             }
 

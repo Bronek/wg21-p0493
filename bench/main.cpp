@@ -2,6 +2,7 @@
 #include "config.hpp"
 #include "runner.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +15,7 @@ void usage(char const *p_) noexcept {
       ::stderr,
       "Proposal P0493 benchmark runner\n\n"
       "Example usage:\n"
-      "%s -c 8 -t w -i 1e6 -s 42 -m 2.5\n\n"
+      "%s -c 8 -t w -i 1e6 -s 42 -m 2.5 -r e\n\n"
       "Where:\n"
       "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
       "parameter between 1 and %u\n"
@@ -22,11 +23,45 @@ void usage(char const *p_) noexcept {
       "s(trong), w(eak), (smar)t and h(ardware), defaults to s\n"
       "-i number of iterations, defaults to 1e6\n"
       "-s random seed, defaults to clock\n"
-      "-m maximum sigma for calibration, default 1.0\n\n"
+      "-m maximum sigma for calibration, default 1.0\n"
+      "-r memory operation type, valid r(elaxed), c(onsume), a(cquire), "
+      "(releas)e, (acq_re)l, (seq_cs)t, defaults to t\n\n"
       "The example above will iterate 1e6 times using 8 threads (pinned to "
-      "cores 0-7), using weak fetch_max and max_sigma 2.5\n\n"
+      "cores 0-7), using weak fetch_max, max_sigma 2.5 and release\n\n"
       "Note: benchmark results go to stdout, all other messages to stderr\n\n",
       p_, config::max_cpus);
+}
+
+inline auto format(type_e i) noexcept -> const char * {
+  switch (i) {
+  case type_e::strong:
+    return "strong";
+  case type_e::weak:
+    return "weak";
+  case type_e::smart:
+    return "smart";
+  case type_e::hardware:
+    return "hardware";
+  }
+  return "what?";
+}
+
+inline auto format(std::memory_order i) noexcept -> const char * {
+  switch (i) {
+  case std::memory_order_relaxed:
+    return "relaxed";
+  case std::memory_order_consume:
+    return "consume";
+  case std::memory_order_acquire:
+    return "acquire";
+  case std::memory_order_release:
+    return "release";
+  case std::memory_order_acq_rel:
+    return "acq_rel";
+  case std::memory_order_seq_cst:
+    return "seq_cst";
+  }
+  return "what?";
 }
 
 auto parse(config &dest, int argc, char **argv) noexcept -> bool {
@@ -38,6 +73,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
   dest.iter = 1e6;
   dest.impl = type_e::strong;
   dest.max_sigma = 1;
+  dest.operation = std::memory_order_seq_cst;
 
   int i = 1;
   bool seed_set = false;
@@ -119,6 +155,23 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         fprintf(::stderr, "Out of range (too low): -m %lu\n", dest.iter);
         return false;
       }
+    } else if (sel == "-r") {
+      if (opt == "r") {
+        dest.operation = std::memory_order_relaxed;
+      } else if (opt == "c") {
+        dest.operation = std::memory_order_consume;
+      } else if (opt == "a") {
+        dest.operation = std::memory_order_acquire;
+      } else if (opt == "e") {
+        dest.operation = std::memory_order_release;
+      } else if (opt == "l") {
+        dest.operation = std::memory_order_acq_rel;
+      } else if (opt == "t") {
+        dest.operation = std::memory_order_seq_cst;
+      } else {
+        fprintf(::stderr, "Cannot parse: -r %s\n", opt.c_str());
+        return false;
+      }
     } else {
       usage(argv[0]);
       return false;
@@ -144,11 +197,12 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
   fprintf(::stderr,
           "Will use:\n\n%lu core(s)\n"
           "%s implementation\n"
+          "%s operation\n"
           "%lu iterations\n"
           "%g max. sigma\n"
           "%u seed\n\n",
-          dest.cpus.count(), format(dest.impl), dest.iter, dest.max_sigma,
-          dest.seed);
+          dest.cpus.count(), format(dest.impl), format(dest.operation),
+          dest.iter, dest.max_sigma, dest.seed);
 
   return true;
 }
