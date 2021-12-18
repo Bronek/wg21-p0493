@@ -16,7 +16,7 @@ enum class type_e : std::size_t { strong = 0, weak, smart, hardware, faster };
  */
 template <type_e> struct atomic_fetch_max;
 
-inline std::memory_order drop_release(std::memory_order m) noexcept {
+inline constexpr std::memory_order drop_release(std::memory_order m) noexcept {
   return (m == std::memory_order_release ? std::memory_order_relaxed
                                          : ((m == std::memory_order_acq_rel ||
                                              m == std::memory_order_seq_cst)
@@ -31,7 +31,7 @@ template <> struct atomic_fetch_max<type_e::strong> final {
     using std::max;
 
     auto t = pv->load(drop_release(m));
-    while (!pv->compare_exchange_weak(t, max(v, t), m, m))
+    while (!pv->compare_exchange_weak(t, max(v, t), m, drop_release(m)))
       ;
     return t;
   }
@@ -44,9 +44,12 @@ template <> struct atomic_fetch_max<type_e::weak> final {
     using std::max;
 
     auto t = pv->load(drop_release(m));
-    while (max(v, t) != t) {
-      if (pv->compare_exchange_weak(t, v, m, m))
+    while (max(v, t) != t || (m == std::memory_order_release || //
+                              m == std::memory_order_acq_rel || //
+                              m == std::memory_order_seq_cst)) {
+      if (pv->compare_exchange_weak(t, v, m, drop_release(m))) {
         break;
+      }
     }
     return t;
   }
@@ -60,7 +63,7 @@ template <> struct atomic_fetch_max<type_e::smart> final {
 
     auto t = pv->load(drop_release(m));
     while (max(v, t) != t) {
-      if (pv->compare_exchange_weak(t, v, m, m))
+      if (pv->compare_exchange_weak(t, v, m, drop_release(m)))
         return t;
     }
 
