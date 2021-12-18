@@ -20,7 +20,7 @@ void usage(char const *p_) noexcept {
       "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
       "parameter between 1 and %u\n"
       "-t one character to denote the type of fetch_max, valid: "
-      "s(trong), w(eak), (smar)t and h(ardware), defaults to s\n"
+      "s(trong), w(eak), (smar)t, h(ardware) and f(aster), defaults to s\n"
       "-i number of iterations, defaults to 1e6\n"
       "-s random seed, defaults to clock\n"
       "-m maximum sigma for calibration, default 1.0\n"
@@ -42,6 +42,8 @@ inline auto format(type_e i) noexcept -> const char * {
     return "smart";
   case type_e::hardware:
     return "hardware";
+  case type_e::faster:
+    return "faster";
   }
   return "what?";
 }
@@ -116,6 +118,8 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         dest.impl = type_e::smart;
       } else if (opt == "h") {
         dest.impl = type_e::hardware;
+      } else if (opt == "f") {
+        dest.impl = type_e::faster;
       } else {
         fprintf(::stderr, "Cannot parse: -t %s\n", opt.c_str());
         return false;
@@ -221,6 +225,8 @@ auto main(int argc, char **argv) noexcept -> int {
       return runner<type_e::smart>{}(config);
     case type_e::hardware:
       return runner<type_e::hardware>{}(config);
+    case type_e::faster:
+      return runner<type_e::faster>{}(config);
     }
   }
 

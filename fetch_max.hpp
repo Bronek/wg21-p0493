@@ -7,7 +7,7 @@
 /**
  * @brief enum for different implementation types
  */
-enum class type_e : std::size_t { strong = 0, weak, smart, hardware };
+enum class type_e : std::size_t { strong = 0, weak, smart, hardware, faster };
 
 /**
  * @brief templated fetch_max implementation, with varying semantics
@@ -74,7 +74,6 @@ template <> struct atomic_fetch_max<type_e::smart> final {
   }
 };
 
-// TODO
 template <> struct atomic_fetch_max<type_e::hardware> final {
 #if defined(__ARM_ARCH_8A)
   auto operator()(std::atomic<int> *pv, int v,
@@ -109,4 +108,20 @@ template <> struct atomic_fetch_max<type_e::hardware> final {
     __builtin_unreachable();
   }
 #endif
+};
+
+template <> struct atomic_fetch_max<type_e::faster> final {
+  auto operator()(std::atomic<int> *pv, int v,
+                  std::memory_order m) const noexcept -> int {
+    using namespace std;
+    using std::max;
+
+    auto t = pv->load(drop_release(m));
+    if (max(v, t) != t || (m == std::memory_order_release || //
+                           m == std::memory_order_acq_rel || //
+                           m == std::memory_order_seq_cst)) {
+      return atomic_fetch_max<type_e::hardware>{}(pv, v, m);
+    }
+    return t;
+  }
 };
