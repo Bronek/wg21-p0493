@@ -16,20 +16,7 @@
 #include <thread>
 #include <vector>
 
-#include <pthread.h> // for pthread_getaffinity_np
-
 template <type_e Impl_> struct runner final {
-  static auto pin_cpu(int cpu) noexcept -> bool {
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(cpu, &cpuset);
-    if (0 != pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset)) {
-      std::fprintf(::stderr, "Unable to pin CPU: %i\n\n", cpu);
-      return false;
-    }
-    return true;
-  }
-
   template <int iters, typename Prng_, typename Dist_, typename F_>
   static auto sample(Prng_ &r, Dist_ &dist, F_ &&fn) noexcept -> double {
     // data sink which the compiler cannot opitmize away
@@ -51,13 +38,13 @@ template <type_e Impl_> struct runner final {
   struct alignas(max_alignment) max_holder final {
     std::atomic<int> max{};
 
-    void reset(int cpus) noexcept {
+    void reset(int threads) noexcept {
       max = 0;
       // Must reset() first because we reuse memory locations
       latch1.reset();
-      latch1.reset(new (&latches_[0]) latch_t(cpus));
+      latch1.reset(new (&latches_[0]) latch_t(threads));
       latch2.reset();
-      latch2.reset(new (&latches_[1]) latch_t(cpus));
+      latch2.reset(new (&latches_[1]) latch_t(threads));
     }
     void arrive_and_wait() noexcept { latch1->arrive_and_wait(1); }
     void count_down() noexcept { latch2->count_down(1); }
@@ -80,18 +67,18 @@ template <type_e Impl_> struct runner final {
   auto operator()(config const &config) noexcept -> int {
     static constexpr atomic_fetch_max<Impl_> fetch_max{};
     static constexpr int inner_iters = 10'000;
-    static constexpr int warmup_iters = 1'000;
+    static constexpr int warmup_iters = 100;
     static constexpr std::size_t array_size = 0x100;
 
     std::array<max_holder, array_size> max_array{};
-    std::size_t const cpus = config.cpus.count();
+    int const num_threads = config.cpus.count();
     for (auto &m : max_array) {
-      m.reset(cpus);
+      m.reset(num_threads);
     }
 
     std::atomic<bool> error = {0};
     auto const runs = 1 + (config.iter - 1) / inner_iters;
-    alignas(64) std::array<std::vector<double>, config::max_cpus> results = {};
+    alignas(64) std::array<std::vector<double>, max_cpus> results = {};
 
     {
       std::vector<std::thread> threads;
@@ -104,7 +91,7 @@ template <type_e Impl_> struct runner final {
             t.join();
           }
         }
-      } join(&threads);
+      } join{&threads};
 
       for (std::size_t i = 0; i < config.cpus.size(); ++i) {
         if (!config.cpus.test(i)) {
@@ -112,7 +99,8 @@ template <type_e Impl_> struct runner final {
         }
 
         threads.emplace_back([&, cpu = i]() noexcept {
-          results[cpu].resize(runs);
+          auto &samples = results[cpu];
+          samples.resize(runs);
           std::ranlux24 r{config.seed + cpu};
           std::uniform_int_distribution<int> dist(0, 2e9);
 
@@ -120,7 +108,7 @@ template <type_e Impl_> struct runner final {
             error = true;
           }
 
-          for (std::size_t i = 0, j = 0; j < runs; ++j) {
+          for (int i = 0, j = 0; j < runs; ++j) {
             auto &m = max_array[i];
             sample<warmup_iters>(r, dist, [&](int n) noexcept -> int {
               return fetch_max(&m.max, n, std::memory_order_relaxed);
@@ -128,10 +116,10 @@ template <type_e Impl_> struct runner final {
 
             m.arrive_and_wait();
             if (!error) {
-              auto &s = results[cpu][j];
-              s = sample<inner_iters>(r, dist, [&](int n) noexcept -> int {
-                return fetch_max(&m.max, n, config.operation);
-              });
+              samples[j] =
+                  sample<inner_iters>(r, dist, [&](int n) noexcept -> int {
+                    return fetch_max(&m.max, n, config.operation);
+                  });
             }
 
             m.count_down();
@@ -140,9 +128,9 @@ template <type_e Impl_> struct runner final {
         });
       }
 
-      for (std::size_t i = 0, j = 0; j < runs; ++j) {
+      for (int i = 0, j = 0; j < runs; ++j) {
         max_array[i].wait();
-        max_array[i].reset(cpus);
+        max_array[i].reset(num_threads);
         i = (i + 1) % array_size;
       }
 
@@ -156,47 +144,47 @@ template <type_e Impl_> struct runner final {
     }
 
     double prng_cost = 0; // PRNG cost
-    while (true) {
+    double best_stdev = 1e6;
+    static constexpr int max_tries = 5;
+    for (int i = 0; i < max_tries; ++i) {
       std::ranlux24 r{(std::size_t)config.seed};
       std::uniform_int_distribution<int> dist(0, 2e9);
       sample<warmup_iters>(r, dist, [&](int i) noexcept -> int { return i; });
 
-      std::vector<double> samples = {};
-      samples.resize((config.iter / inner_iters) + 1);
-      for (auto &s : samples) {
-        s = sample<inner_iters>(r, dist,
-                                [&](int i) noexcept -> int { return i; });
-      }
-
       stats s1{};
-      for (auto s : samples) {
-        s1.push(s);
+      for (int i = 0; i < runs; ++i) {
+        s1.push(sample<inner_iters>(r, dist,
+                                    [&](int i) noexcept -> int { return i; }));
       }
 
-      if (s1.stdev() < config.max_sigma) {
-        prng_cost = std::max(0.0, (s1.mean() - s1.stdev() * 5));
-        std::fprintf(::stderr, "Calibration: %g (%g)\n\n", prng_cost,
-                     s1.stdev());
-        break;
+      double const stdev = s1.stdev();
+      if (stdev < best_stdev) {
+        best_stdev = stdev;
+        prng_cost = std::max(0.0, (s1.mean() - stdev * 5));
+        if (stdev <= config.max_sigma) {
+          break;
+        }
       }
     }
 
+    if (best_stdev <= config.max_sigma) {
+      std::fprintf(::stderr, "Calibration: %g (%g)\n\n", prng_cost, best_stdev);
+    } else {
+      std::fprintf(::stderr, "Calibration failed: best %g, required %g\n\n",
+                   best_stdev, config.max_sigma);
+      return 3;
+    }
+
     stats s2{};
-    for (std::size_t i = 0; i < config.cpus.size(); ++i) {
-      if (!config.cpus.test(i)) {
-        continue;
-      }
-      if (i == 0) {
-        // Ignore samples collected from CPU 0 - too much noise, by design.
-        // This CPU is not isolated and does all the other work.
-        continue;
-      }
+    // Ignore samples collected from CPU 0 - too much noise, by design.
+    // This CPU is not isolated and does all the other work.
+    for (std::size_t i = 1; i < config.cpus.size(); ++i) {
       for (auto r : results[i]) {
         s2.push(r - prng_cost);
       }
     }
 
-    std::printf("%lu\t%g\t%g\n", config.cpus.count(), s2.mean(), s2.stdev());
+    std::printf("%u\t%g\t%g\n", num_threads, s2.mean(), s2.stdev());
     return 0;
   }
 };

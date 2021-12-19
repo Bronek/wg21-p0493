@@ -1,5 +1,6 @@
 #include "../fetch_max.hpp"
 #include "config.hpp"
+#include "cpu.hpp"
 #include "runner.hpp"
 
 #include <atomic>
@@ -9,7 +10,7 @@
 #include <limits>
 #include <string>
 
-void usage(char const *p_) noexcept {
+void usage(char const *p_, int cpus) noexcept {
   using namespace std;
   fprintf(
       ::stderr,
@@ -17,8 +18,8 @@ void usage(char const *p_) noexcept {
       "Example usage:\n"
       "%s -c 8 -t w -i 1e6 -s 42 -m 2.5 -r e\n\n"
       "Where:\n"
-      "-c number of cores to run on (will to pin 0, 1, 2 etc.), mandatory "
-      "parameter between 1 and %u\n"
+      "-c number of cores to run on (will pin to 1, 2 etc, to 0 only in "
+      "the last resort), mandatory parameter between 1 and %u\n"
       "-t one character to denote the type of fetch_max, valid: "
       "s(trong), w(eak), (smar)t, h(ardware) and f(aster), defaults to s\n"
       "-i number of iterations, defaults to 1e6\n"
@@ -28,8 +29,10 @@ void usage(char const *p_) noexcept {
       "(releas)e, (acq_re)l, (seq_cs)t, defaults to t\n\n"
       "The example above will iterate 1e6 times using 8 threads (pinned to "
       "cores 0-7), using weak fetch_max, max_sigma 2.5 and release\n\n"
-      "Note: benchmark results go to stdout, all other messages to stderr\n\n",
-      p_, config::max_cpus);
+      "Notes:\n1. benchmark results go to stdout, other messages to stderr\n"
+      "2. maximum number of supported cpus is %u\n"
+      "3. samples from core 0 are assumed to be noisy and are ignored\n\n",
+      p_, cpus, max_cpus);
 }
 
 inline auto format(type_e i) noexcept -> const char * {
@@ -68,8 +71,9 @@ inline auto format(std::memory_order i) noexcept -> const char * {
 
 auto parse(config &dest, int argc, char **argv) noexcept -> bool {
   using namespace std;
+  int detected_cpus = count_cpus();
   if (argc < 3) {
-    usage(argv[0]);
+    usage(argv[0], detected_cpus);
     return false;
   }
   dest.iter = 1e6;
@@ -98,16 +102,14 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       } else if (cpus < 1) {
         fprintf(::stderr, "Out of range (too low): -c %i\n", cpus);
         return false;
+      } else if (cpus > detected_cpus) {
+        fprintf(::stderr, "Out of range (too high): -c %i\n", cpus);
+        return false;
       }
 
       // Start at CPU 1 which is first isolated
       for (int j = 1; j <= cpus; ++j) {
-        dest.cpus.set(j % config::max_cpus);
-      }
-
-      if ((int)dest.cpus.count() != cpus) {
-        fprintf(::stderr, "Out of range (too high): -c %i\n", cpus);
-        return false;
+        dest.cpus.set(j % detected_cpus);
       }
     } else if (sel == "-t") {
       if (opt == "s") {
@@ -133,7 +135,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       }
       dest.iter = d;
       if (dest.iter < 100) {
-        fprintf(::stderr, "Out of range (too low): -i %lu\n", dest.iter);
+        fprintf(::stderr, "Out of range (too low): -i %u\n", dest.iter);
         return false;
       }
     } else if (sel == "-s") {
@@ -154,11 +156,11 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         fprintf(::stderr, "Cannot parse: -m %s\n", opt.c_str());
         return false;
       }
-      dest.max_sigma = d;
-      if (dest.max_sigma <= 0) {
-        fprintf(::stderr, "Out of range (too low): -m %lu\n", dest.iter);
+      if (d <= 0) {
+        fprintf(::stderr, "Out of range (too low): -m %g\n", d);
         return false;
       }
+      dest.max_sigma = d;
     } else if (sel == "-r") {
       if (opt == "r") {
         dest.operation = std::memory_order_relaxed;
@@ -177,13 +179,13 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
         return false;
       }
     } else {
-      usage(argv[0]);
+      usage(argv[0], detected_cpus);
       return false;
     }
   }
 
   if (i != argc) {
-    usage(argv[0]);
+    usage(argv[0], detected_cpus);
     return false;
   }
 
@@ -202,7 +204,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
           "Will use:\n\n%lu core(s)\n"
           "%s implementation\n"
           "%s operation\n"
-          "%lu iterations\n"
+          "%u iterations\n"
           "%g max. sigma\n"
           "%u seed\n\n",
           dest.cpus.count(), format(dest.impl), format(dest.operation),
