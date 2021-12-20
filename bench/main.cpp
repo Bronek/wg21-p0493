@@ -102,7 +102,7 @@ auto parse(config &dest, int argc, char **argv) noexcept -> bool {
       } else if (cpus < 1) {
         fprintf(::stderr, "Out of range (too low): -c %i\n", cpus);
         return false;
-      } else if (cpus > detected_cpus) {
+      } else if (cpus > min(max_cpus, detected_cpus)) {
         fprintf(::stderr, "Out of range (too high): -c %i\n", cpus);
         return false;
       }
