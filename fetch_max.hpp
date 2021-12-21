@@ -119,12 +119,16 @@ template <> struct atomic_fetch_max<type_e::faster> final {
     using namespace std;
     using std::max;
 
-    auto t = pv->load(drop_release(m));
-    if (max(v, t) != t || (m == std::memory_order_release || //
-                           m == std::memory_order_acq_rel || //
-                           m == std::memory_order_seq_cst)) {
+    if (m == std::memory_order_release || //
+        m == std::memory_order_acq_rel || //
+        m == std::memory_order_seq_cst) {
       return atomic_fetch_max<type_e::hardware>{}(pv, v, m);
+    } else {
+      auto t = pv->load(drop_release(m));
+      if (max(t, v) != t) {
+        return atomic_fetch_max<type_e::hardware>{}(pv, v, m);
+      }
+      return t;
     }
-    return t;
   }
 };
