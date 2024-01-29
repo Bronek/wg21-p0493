@@ -5,6 +5,7 @@
 #include "latch.hpp"
 #include "stats.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
